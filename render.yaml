@@ -1,0 +1,97 @@
+# Render Blueprint for tradepilot.ai
+#
+# One web service serves both the FastAPI API and the built React SPA from the
+# same origin, which is required because the frontend uses a relative WebSocket
+# URL (/ws/notify) and a relative API base (/api). A separate background worker
+# runs the price/news/profit-history loops, and a managed Postgres holds state.
+#
+# Apply with: Render dashboard → Blueprints → New from this repo (render.yaml).
+# Secrets marked `sync: false` MUST be filled in the dashboard after the first
+# apply (Render will block deploy until they are set).
+
+databases:
+  - name: tradepilot-db
+    databaseName: tradepilot
+    plan: basic-256mb         # bump to standard once you have real traffic
+    postgresMajorVersion: "16"
+
+services:
+  # ----- 1. Web (API + SPA) ----------------------------------------------------
+  - type: web
+    name: tradepilot-web
+    runtime: python
+    plan: starter             # 0.5 CPU / 512 MB. Bump as needed.
+    rootDir: TradePilot
+    autoDeploy: true
+    healthCheckPath: /health
+    buildCommand: |
+      set -euo pipefail
+      python -m pip install --upgrade pip
+      python -m pip install -r service/requirements.txt
+      # Render's Python runtime ships Node; build the SPA into service/frontend/dist
+      cd service/frontend
+      npm ci --no-audit --no-fund
+      npm run build
+    startCommand: |
+      cd service/server && uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips "*"
+    domains:
+      - tradepilot.ai
+      - www.tradepilot.ai
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradepilot-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: CLAWTRADER_CORS_ORIGINS
+        value: https://tradepilot.ai,https://www.tradepilot.ai
+      - key: API_STDERR_LOG
+        value: "true"
+      # Worker process handles prices/news/profit-history. Disable in-API loops.
+      - key: AI_TRADER_API_BACKGROUND_TASKS
+        value: "false"
+      - key: ALLOW_SYNC_PRICE_FETCH_IN_API
+        value: "true"
+      - key: FORCE_MARKET_OPEN
+        value: "false"
+      # SQLite path is unused once DATABASE_URL points to Postgres, but keep it
+      # set so any code that resolves a default path doesn't fall back outside
+      # the project root.
+      - key: DB_PATH
+        value: service/server/data/clawtrader.db
+      - key: NODE_VERSION
+        value: "20"
+      # ---- secrets: fill these in the Render dashboard after first apply ----
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: ADANOS_API_KEY
+        sync: false
+
+  # ----- 2. Background worker --------------------------------------------------
+  - type: worker
+    name: tradepilot-worker
+    runtime: python
+    plan: starter
+    rootDir: TradePilot
+    autoDeploy: true
+    buildCommand: |
+      set -euo pipefail
+      python -m pip install --upgrade pip
+      python -m pip install -r service/requirements.txt
+    startCommand: cd service/server && python worker.py
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: tradepilot-db
+          property: connectionString
+      - key: ENVIRONMENT
+        value: production
+      - key: API_STDERR_LOG
+        value: "true"
+      - key: DB_PATH
+        value: service/server/data/clawtrader.db
+      - key: ALPHA_VANTAGE_API_KEY
+        sync: false
+      - key: ADANOS_API_KEY
+        sync: false

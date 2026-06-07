@@ -1,0 +1,77 @@
+name: Post-deploy health check
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: "Base URL to probe (default https://tradepilot.ai)"
+        required: false
+        default: "https://tradepilot.ai"
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Render to start the new deploy
+        run: sleep 90
+
+      - name: Poll /health until healthy or timeout
+        env:
+          BASE_URL: ${{ inputs.target_url || 'https://tradepilot.ai' }}
+        run: |
+          set -euo pipefail
+          attempts=0
+          max_attempts=40   # 40 * 15s = 10 minutes
+          while : ; do
+            attempts=$((attempts + 1))
+            body="$(curl --fail --silent --show-error --max-time 10 "$BASE_URL/health" || true)"
+            if [ -n "$body" ] && printf '%s' "$body" | grep -q '"status":[[:space:]]*"ok"'; then
+              echo "✓ healthy on attempt $attempts: $body"
+              exit 0
+            fi
+            if [ "$attempts" -ge "$max_attempts" ]; then
+              echo "✗ /health did not become healthy after $attempts attempts" >&2
+              echo "last body: $body" >&2
+              exit 1
+            fi
+            echo "attempt $attempts: not ready yet, sleeping 15s..."
+            sleep 15
+          done
+
+      - name: Smoke-test SPA + a public API
+        env:
+          BASE_URL: ${{ inputs.target_url || 'https://tradepilot.ai' }}
+        run: |
+          set -euo pipefail
+          # SPA root must serve HTML (not the API JSON fallback).
+          status="$(curl -o /tmp/index.html -s -w '%{http_code}' "$BASE_URL/")"
+          if [ "$status" != "200" ] || ! grep -qi '<div id="root"' /tmp/index.html; then
+            echo "✗ SPA root failed: status=$status" >&2
+            head -c 400 /tmp/index.html >&2 || true
+            exit 1
+          fi
+          echo "✓ SPA root OK"
+
+          # Public discussions feed must respond with JSON.
+          feed_status="$(curl -o /tmp/feed.json -s -w '%{http_code}' "$BASE_URL/api/signals/feed?message_type=discussion&limit=1")"
+          if [ "$feed_status" != "200" ]; then
+            echo "✗ /api/signals/feed returned $feed_status" >&2
+            head -c 400 /tmp/feed.json >&2 || true
+            exit 1
+          fi
+          echo "✓ /api/signals/feed OK"
+
+          # Unknown API path must now return JSON 404, not the SPA HTML.
+          unknown_status="$(curl -o /tmp/unknown.json -s -w '%{http_code}' "$BASE_URL/api/__definitely_not_a_route__")"
+          if [ "$unknown_status" != "404" ]; then
+            echo "✗ unknown /api path returned $unknown_status (expected 404)" >&2
+            head -c 400 /tmp/unknown.json >&2 || true
+            exit 1
+          fi
+          echo "✓ unknown /api path returns 404 JSON"
