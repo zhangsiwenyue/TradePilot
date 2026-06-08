@@ -5,11 +5,14 @@ pydantic>=2.5.3
 # Pydantic EmailStr requires email-validator at schema-build time.
 email-validator>=2.1.0
 python-dotenv>=1.0.0
-web3>=6.15.1
+# `web3` is not imported by the server today; if/when blockchain features land,
+# install separately or re-add here.
 requests>=2.31.0
 aiohttp>=3.9.1
 python-multipart>=0.0.6
-openrouter>=1.0.0
+# `openrouter` is an OPTIONAL extra used only by market_intel.py when both
+# OPENROUTER_API_KEY and OPENROUTER_MODEL are set. Install on demand with
+# `pip install openrouter` if you want LLM-generated market summaries.
 psycopg[binary]>=3.2.1
 redis>=5.0.8
 # zoneinfo on Windows / minimal Linux images needs the IANA database wheel.
