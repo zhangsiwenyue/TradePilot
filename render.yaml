@@ -1,27 +1,32 @@
-# Render Blueprint for tradepilot.ai
+# Render Blueprint for tradepilot-web.onrender.com (FREE tier, $0/mo)
 #
-# One web service serves both the FastAPI API and the built React SPA from the
-# same origin, which is required because the frontend uses a relative WebSocket
-# URL (/ws/notify) and a relative API base (/api). A separate background worker
-# runs the price/news/profit-history loops, and a managed Postgres holds state.
+# One free web service serves both the FastAPI API and the built React SPA from
+# the same origin (required because the frontend uses a relative WebSocket URL
+# /ws/notify and a relative API base /api).
+#
+# Free-tier tradeoffs:
+#   * The service SLEEPS after 15 minutes idle; first request after sleep takes
+#     ~20–40 s to wake.
+#   * No paid worker, so background loops (price refresh / news / settlements)
+#     run INSIDE the API process via AI_TRADER_API_BACKGROUND_TASKS=true. They
+#     pause whenever the web service sleeps.
+#   * No managed Postgres: bring your own free Neon Postgres database and paste
+#     its connection string into the DATABASE_URL secret in the dashboard.
+#       1. Sign up at https://console.neon.tech (free 0.5 GB).
+#       2. Create project "tradepilot".
+#       3. Copy the postgresql://... connection string (ensure ?sslmode=require).
+#       4. Paste into Render → tradepilot-web → Environment → DATABASE_URL.
 #
 # Apply with: Render dashboard → Blueprints → New from this repo (render.yaml).
-# Secrets marked `sync: false` MUST be filled in the dashboard after the first
-# apply (Render will block deploy until they are set).
-
-databases:
-  - name: tradepilot-db
-    databaseName: tradepilot
-    plan: basic-256mb         # bump to standard once you have real traffic
-    postgresMajorVersion: "16"
+# Secrets marked `sync: false` MUST be filled in the dashboard after first apply
+# (Render will block deploy until they are set).
 
 services:
-  # ----- 1. Web (API + SPA) ----------------------------------------------------
+  # ----- Web (API + SPA, free tier) -------------------------------------------
   - type: web
     name: tradepilot-web
     runtime: python
-    plan: starter             # 0.5 CPU / 512 MB. Bump as needed.
-    rootDir: TradePilot
+    plan: free                # 0.1 CPU / 512 MB, sleeps after 15 min idle
     autoDeploy: true
     healthCheckPath: /health
     buildCommand: |
@@ -33,24 +38,18 @@ services:
       npm ci --no-audit --no-fund
       npm run build
     startCommand: |
-      cd service/server && uvicorn main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips "*"
-    domains:
-      - tradepilot.ai
-      - www.tradepilot.ai
+      cd service/server && uvicorn main:app --host 0.0.0.0 --port $PORT --workers 1 --proxy-headers --forwarded-allow-ips "*"
     envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: tradepilot-db
-          property: connectionString
       - key: ENVIRONMENT
         value: production
       - key: CLAWTRADER_CORS_ORIGINS
-        value: https://tradepilot.ai,https://www.tradepilot.ai
+        value: https://tradepilot-web.onrender.com
       - key: API_STDERR_LOG
         value: "true"
-      # Worker process handles prices/news/profit-history. Disable in-API loops.
+      # No separate worker on free tier: run background loops inside the API
+      # process. They pause when the web service sleeps.
       - key: AI_TRADER_API_BACKGROUND_TASKS
-        value: "false"
+        value: "true"
       - key: ALLOW_SYNC_PRICE_FETCH_IN_API
         value: "true"
       - key: FORCE_MARKET_OPEN
@@ -63,34 +62,10 @@ services:
       - key: NODE_VERSION
         value: "20"
       # ---- secrets: fill these in the Render dashboard after first apply ----
-      - key: ALPHA_VANTAGE_API_KEY
-        sync: false
-      - key: ADANOS_API_KEY
-        sync: false
-
-  # ----- 2. Background worker --------------------------------------------------
-  - type: worker
-    name: tradepilot-worker
-    runtime: python
-    plan: starter
-    rootDir: TradePilot
-    autoDeploy: true
-    buildCommand: |
-      set -euo pipefail
-      python -m pip install --upgrade pip
-      python -m pip install -r service/requirements.txt
-    startCommand: cd service/server && python worker.py
-    envVars:
+      # Neon (or any) Postgres connection string. REQUIRED — SQLite is not
+      # durable on Render's ephemeral disk.
       - key: DATABASE_URL
-        fromDatabase:
-          name: tradepilot-db
-          property: connectionString
-      - key: ENVIRONMENT
-        value: production
-      - key: API_STDERR_LOG
-        value: "true"
-      - key: DB_PATH
-        value: service/server/data/clawtrader.db
+        sync: false
       - key: ALPHA_VANTAGE_API_KEY
         sync: false
       - key: ADANOS_API_KEY
