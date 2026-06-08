@@ -2640,6 +2640,12 @@ a {
   padding: 18px;
 }
 
+/* Latest News panel rendered as a full-width sibling of .intel-board so its
+   right edge aligns with the rightmost Featured Symbols status card. */
+.intel-news-card-wide {
+  padding: 18px;
+}
+
 .intel-news-card-header {
   display: flex;
   justify-content: space-between;

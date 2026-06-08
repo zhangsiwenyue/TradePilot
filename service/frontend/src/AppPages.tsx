@@ -706,117 +706,6 @@ export function FinancialEventsPage() {
                     })()}
                   </article>
                 )}
-
-                {currentCategory && (
-                  <article className="intel-news-card intel-main-panel">
-                    <div className="intel-news-card-header">
-                      <div>
-                        <div className="intel-news-title">{currentCategoryTitle}</div>
-                        <div className="intel-news-description">{language === 'zh' ? currentCategory.description_zh : currentCategory.description}</div>
-                      </div>
-                      <div className={`intel-activity-badge ${currentCategory.summary?.activity_level || 'quiet'}`}>
-                        {currentCategory.summary?.activity_level || (language === 'zh' ? '暂无' : 'N/A')}
-                      </div>
-                    </div>
-
-                    <div className="intel-news-card-meta">
-                      <span>{language === 'zh' ? '上次更新' : 'Last update'}: {formatIntelTimestamp(currentCategory.created_at, language)}</span>
-                    </div>
-
-                    <div className="intel-panel-tabs">
-                      {categories.map((section) => (
-                        <button
-                          key={section.category}
-                          type="button"
-                          className={`intel-panel-tab ${section.category === currentCategory.category ? 'active' : ''}`}
-                          onClick={() => setActiveNewsCategory(section.category)}
-                        >
-                          <span className="intel-panel-tab-label">
-                            {section.category === 'equities'
-                              ? (language === 'zh' ? '最新新闻' : 'Latest News')
-                              : (language === 'zh' ? section.label_zh : section.label)}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {(() => {
-                      const totalItems = currentCategory.items?.length || 0
-                      const totalPages = Math.max(1, Math.ceil(totalItems / FINANCIAL_NEWS_PAGE_SIZE))
-                      const currentPage = Math.min(newsPages[currentCategory.category] || 0, totalPages - 1)
-                      const start = currentPage * FINANCIAL_NEWS_PAGE_SIZE
-                      const pageItems = (currentCategory.items || []).slice(start, start + FINANCIAL_NEWS_PAGE_SIZE)
-
-                      return pageItems.length ? (
-                        <>
-                          <div className="intel-news-list">
-                            {pageItems.map((item) => (
-                              <a
-                                key={`${currentCategory.category}-${item.url || item.title}`}
-                                className="intel-news-item"
-                                href={item.url || undefined}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                <div className="intel-news-item-title">{item.title}</div>
-                                <div className="intel-news-item-meta">
-                                  <span>{item.source}</span>
-                                  <span>{formatIntelTimestamp(item.time_published, language)}</span>
-                                </div>
-                                {item.summary && <div className="intel-news-item-summary">{item.summary}</div>}
-                                <div className="intel-chip-row">
-                                  {item.overall_sentiment_label && (
-                                    <span className="intel-chip">{item.overall_sentiment_label}</span>
-                                  )}
-                                  {(item.ticker_sentiment || []).slice(0, 4).map((ticker: any) => (
-                                    <span key={`${item.title}-${ticker.ticker}`} className="intel-chip intel-chip-symbol">
-                                      {ticker.ticker}
-                                    </span>
-                                  ))}
-                                </div>
-                              </a>
-                            ))}
-                          </div>
-                          {totalPages > 1 && (
-                            <div className="intel-pager">
-                              <button
-                                type="button"
-                                className="intel-pager-button"
-                                disabled={currentPage === 0}
-                                onClick={() => setNewsPages((prev) => ({
-                                  ...prev,
-                                  [currentCategory.category]: Math.max(0, currentPage - 1)
-                                }))}
-                              >
-                                {language === 'zh' ? '← 上一页' : '← Prev'}
-                              </button>
-                              <div className="intel-pager-status">
-                                {language === 'zh'
-                                  ? `第 ${currentPage + 1} / ${totalPages} 页`
-                                  : `Page ${currentPage + 1} / ${totalPages}`}
-                              </div>
-                              <button
-                                type="button"
-                                className="intel-pager-button"
-                                disabled={currentPage >= totalPages - 1}
-                                onClick={() => setNewsPages((prev) => ({
-                                  ...prev,
-                                  [currentCategory.category]: Math.min(totalPages - 1, currentPage + 1)
-                                }))}
-                              >
-                                {language === 'zh' ? '下一页 →' : 'Next →'}
-                              </button>
-                            </div>
-                          )}
-                        </>
-                      ) : (
-                        <div className="intel-empty-inline">
-                          {language === 'zh' ? '当前分类暂无快照内容。' : 'No snapshot content available for this category yet.'}
-                        </div>
-                      )
-                    })()}
-                  </article>
-                )}
               </div>
 
               <aside className="intel-side-column">
@@ -900,6 +789,117 @@ export function FinancialEventsPage() {
                 )}
               </aside>
             </div>
+
+            {currentCategory && (
+              <article className="intel-news-card intel-news-card-wide">
+                  <div className="intel-news-card-header">
+                    <div>
+                      <div className="intel-news-title">{currentCategoryTitle}</div>
+                      <div className="intel-news-description">{language === 'zh' ? currentCategory.description_zh : currentCategory.description}</div>
+                    </div>
+                    <div className={`intel-activity-badge ${currentCategory.summary?.activity_level || 'quiet'}`}>
+                      {currentCategory.summary?.activity_level || (language === 'zh' ? '暂无' : 'N/A')}
+                    </div>
+                  </div>
+
+                  <div className="intel-news-card-meta">
+                    <span>{language === 'zh' ? '上次更新' : 'Last update'}: {formatIntelTimestamp(currentCategory.created_at, language)}</span>
+                  </div>
+
+                  <div className="intel-panel-tabs">
+                    {categories.map((section) => (
+                      <button
+                        key={section.category}
+                        type="button"
+                        className={`intel-panel-tab ${section.category === currentCategory.category ? 'active' : ''}`}
+                        onClick={() => setActiveNewsCategory(section.category)}
+                      >
+                        <span className="intel-panel-tab-label">
+                          {section.category === 'equities'
+                            ? (language === 'zh' ? '最新新闻' : 'Latest News')
+                            : (language === 'zh' ? section.label_zh : section.label)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {(() => {
+                    const totalItems = currentCategory.items?.length || 0
+                    const totalPages = Math.max(1, Math.ceil(totalItems / FINANCIAL_NEWS_PAGE_SIZE))
+                    const currentPage = Math.min(newsPages[currentCategory.category] || 0, totalPages - 1)
+                    const start = currentPage * FINANCIAL_NEWS_PAGE_SIZE
+                    const pageItems = (currentCategory.items || []).slice(start, start + FINANCIAL_NEWS_PAGE_SIZE)
+
+                    return pageItems.length ? (
+                      <>
+                        <div className="intel-news-list">
+                          {pageItems.map((item) => (
+                            <a
+                              key={`${currentCategory.category}-${item.url || item.title}`}
+                              className="intel-news-item"
+                              href={item.url || undefined}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <div className="intel-news-item-title">{item.title}</div>
+                              <div className="intel-news-item-meta">
+                                <span>{item.source}</span>
+                                <span>{formatIntelTimestamp(item.time_published, language)}</span>
+                              </div>
+                              {item.summary && <div className="intel-news-item-summary">{item.summary}</div>}
+                              <div className="intel-chip-row">
+                                {item.overall_sentiment_label && (
+                                  <span className="intel-chip">{item.overall_sentiment_label}</span>
+                                )}
+                                {(item.ticker_sentiment || []).slice(0, 4).map((ticker: any) => (
+                                  <span key={`${item.title}-${ticker.ticker}`} className="intel-chip intel-chip-symbol">
+                                    {ticker.ticker}
+                                  </span>
+                                ))}
+                              </div>
+                            </a>
+                          ))}
+                        </div>
+                        {totalPages > 1 && (
+                          <div className="intel-pager">
+                            <button
+                              type="button"
+                              className="intel-pager-button"
+                              disabled={currentPage === 0}
+                              onClick={() => setNewsPages((prev) => ({
+                                ...prev,
+                                [currentCategory.category]: Math.max(0, currentPage - 1)
+                              }))}
+                            >
+                              {language === 'zh' ? '← 上一页' : '← Prev'}
+                            </button>
+                            <div className="intel-pager-status">
+                              {language === 'zh'
+                                ? `第 ${currentPage + 1} / ${totalPages} 页`
+                                : `Page ${currentPage + 1} / ${totalPages}`}
+                            </div>
+                            <button
+                              type="button"
+                              className="intel-pager-button"
+                              disabled={currentPage >= totalPages - 1}
+                              onClick={() => setNewsPages((prev) => ({
+                                ...prev,
+                                [currentCategory.category]: Math.min(totalPages - 1, currentPage + 1)
+                              }))}
+                            >
+                              {language === 'zh' ? '下一页 →' : 'Next →'}
+                            </button>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="intel-empty-inline">
+                        {language === 'zh' ? '当前分类暂无快照内容。' : 'No snapshot content available for this category yet.'}
+                      </div>
+                    )
+                  })()}
+                </article>
+              )}
           </>
         )}
       </section>
