@@ -17,4 +17,7 @@ psycopg[binary]>=3.2.1
 redis>=5.0.8
 # zoneinfo on Windows / minimal Linux images needs the IANA database wheel.
 tzdata>=2024.1
+# yfinance is the free fallback used by price_fetcher when Alpha Vantage is
+# unavailable. Required so /api/price works without an Alpha Vantage key.
+yfinance>=0.2.40
 pytest>=8.0.0
