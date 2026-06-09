@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 
-import { AgentName, API_BASE, COMMUNITY_FEED_PAGE_SIZE, MARKETS, isVerifiedAgent, useLanguage } from './appShared'
+import { AgentName, API_BASE, BrokerLinks, COMMUNITY_FEED_PAGE_SIZE, MARKETS, isVerifiedAgent, useLanguage } from './appShared'
 
 function AuthShell({
   mode,
@@ -291,6 +291,23 @@ function SignalCard({
         <div className="tags">
           {signal.symbols.map((sym: string) => (
             <span key={sym} className="tag">{sym}</span>
+          ))}
+        </div>
+      )}
+
+      {/* "Open on real broker" deep-link buttons. Paper-trading only; we never
+          handle the user's broker credentials. */}
+      {Array.isArray(signal.symbols) && signal.symbols.length > 0 && signal.market && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', marginTop: '8px' }}>
+          {signal.symbols.slice(0, 3).map((sym: string) => (
+            <BrokerLinks
+              key={`broker-${sym}`}
+              market={signal.market}
+              symbol={sym}
+              side={signal.action || signal.side}
+              tokenId={signal.token_id}
+              compact
+            />
           ))}
         </div>
       )}

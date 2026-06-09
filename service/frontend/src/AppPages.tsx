@@ -6,6 +6,7 @@ import {
   AgentName,
   API_BASE,
   type AgentInfo,
+  BrokerLinks,
   COPY_TRADING_PAGE_SIZE,
   FINANCIAL_NEWS_PAGE_SIZE,
   LEADERBOARD_LINE_COLORS,
@@ -2604,6 +2605,17 @@ export function TradePage({ token, agentInfo, onTradeSuccess }: { token: string,
             <div style={{ marginTop: '8px', color: 'var(--accent-primary)', fontWeight: 500 }}>
               {language === 'zh' ? '当前价格: $' : 'Current Price: $'}{currentPrice.toFixed(2)}
             </div>
+          )}
+          {/* "Open on real broker" deep-link buttons. TradePilot is paper
+              trading only; users can take the same trade with real money on
+              their own brokerage account. We never see their credentials. */}
+          {symbol && (
+            <BrokerLinks
+              market={market}
+              symbol={symbol}
+              side={action}
+              tokenId={market === 'polymarket' ? polymarketTokenId : undefined}
+            />
           )}
         </div>
 

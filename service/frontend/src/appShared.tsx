@@ -232,6 +232,146 @@ export function getInstrumentLabel(item: any) {
   return item?.title || item?.symbol || ''
 }
 
+// ---------------------------------------------------------------------------
+// Broker deep links
+//
+// TradePilot is paper-trading only. This component renders one-click "open on
+// your real broker" links for each symbol mentioned in a signal so users can
+// execute the same trade with real money on their own account. We never see
+// their broker credentials.
+// ---------------------------------------------------------------------------
+
+type BrokerKey = 'alpaca' | 'webull' | 'robinhood' | 'binance' | 'coinbase' | 'polymarket' | 'yahoo'
+
+const BROKER_DEFINITIONS: Record<BrokerKey, {
+  label: string
+  markets: Array<'us-stock' | 'crypto' | 'polymarket'>
+  buildUrl: (args: { symbol: string; side?: string; tokenId?: string }) => string | null
+}> = {
+  alpaca: {
+    label: 'Alpaca',
+    markets: ['us-stock'],
+    buildUrl: ({ symbol }) => `https://app.alpaca.markets/trade/${encodeURIComponent(symbol)}`
+  },
+  webull: {
+    label: 'Webull',
+    markets: ['us-stock'],
+    buildUrl: ({ symbol }) => `https://www.webull.com/quote/nasdaq-${encodeURIComponent(symbol.toLowerCase())}`
+  },
+  robinhood: {
+    label: 'Robinhood',
+    markets: ['us-stock'],
+    buildUrl: ({ symbol }) => `https://robinhood.com/stocks/${encodeURIComponent(symbol)}`
+  },
+  yahoo: {
+    label: 'Yahoo Finance',
+    markets: ['us-stock'],
+    buildUrl: ({ symbol }) => `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}`
+  },
+  binance: {
+    label: 'Binance',
+    markets: ['crypto'],
+    buildUrl: ({ symbol }) => {
+      const base = symbol.toUpperCase().replace(/USDT?$/, '')
+      return `https://www.binance.com/en/trade/${encodeURIComponent(base)}_USDT?type=spot`
+    }
+  },
+  coinbase: {
+    label: 'Coinbase',
+    markets: ['crypto'],
+    buildUrl: ({ symbol }) => {
+      const base = symbol.toUpperCase().replace(/USDT?$|USDC$/, '')
+      return `https://www.coinbase.com/advanced-trade/spot/${encodeURIComponent(base)}-USD`
+    }
+  },
+  polymarket: {
+    label: 'Polymarket',
+    markets: ['polymarket'],
+    buildUrl: ({ symbol, tokenId }) => {
+      if (tokenId) {
+        return `https://polymarket.com/market/${encodeURIComponent(tokenId)}`
+      }
+      const slug = symbol.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '')
+      return slug ? `https://polymarket.com/event/${encodeURIComponent(slug)}` : 'https://polymarket.com/'
+    }
+  }
+}
+
+export function BrokerLinks({
+  market,
+  symbol,
+  side,
+  tokenId,
+  compact = false
+}: {
+  market: string | undefined | null
+  symbol: string | undefined | null
+  side?: string | null
+  tokenId?: string | null
+  compact?: boolean
+}) {
+  const { language } = useLanguage()
+  if (!market || !symbol) return null
+
+  const normalisedSymbol = symbol.trim()
+  if (!normalisedSymbol) return null
+
+  const matches = (Object.entries(BROKER_DEFINITIONS) as Array<[BrokerKey, typeof BROKER_DEFINITIONS[BrokerKey]]>)
+    .filter(([, def]) => def.markets.includes(market as 'us-stock' | 'crypto' | 'polymarket'))
+
+  if (matches.length === 0) return null
+
+  const sideLabel = side
+    ? (language === 'zh'
+        ? ({ buy: '\u4e70', sell: '\u5356', short: '\u7a7a', cover: '\u5e73\u7a7a', long: '\u591a' } as Record<string, string>)[side.toLowerCase()] || ''
+        : side.toLowerCase())
+    : ''
+
+  return (
+    <div
+      className="broker-links"
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px',
+        marginTop: compact ? '6px' : '10px',
+        alignItems: 'center'
+      }}
+    >
+      <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginRight: '4px' }}>
+        {language === 'zh'
+          ? `\u5728\u771f\u5b9e\u7ecf\u7eaa\u5546${sideLabel ? `\u4e0a\u4e0b\u5355${sideLabel}` : '\u4e0a\u67e5\u770b'} ${normalisedSymbol}:`
+          : `${sideLabel ? `${sideLabel[0].toUpperCase()}${sideLabel.slice(1)} ` : 'Open '}${normalisedSymbol} on:`}
+      </span>
+      {matches.map(([key, def]) => {
+        const url = def.buildUrl({ symbol: normalisedSymbol, side: side || undefined, tokenId: tokenId || undefined })
+        if (!url) return null
+        return (
+          <a
+            key={key}
+            href={url}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="btn btn-ghost"
+            style={{
+              padding: '4px 10px',
+              fontSize: '12px',
+              borderRadius: '999px',
+              textDecoration: 'none',
+              lineHeight: 1.4
+            }}
+            title={language === 'zh'
+              ? `\u5728 ${def.label} \u4e0a\u67e5\u770b ${normalisedSymbol}\uff08\u65b0\u6807\u7b7e\u9875\uff09`
+              : `Open ${normalisedSymbol} on ${def.label} (new tab)`}
+          >
+            {def.label} \u2197
+          </a>
+        )
+      })}
+    </div>
+  )
+}
+
 export function LeaderboardTooltip({
   active,
   payload,
