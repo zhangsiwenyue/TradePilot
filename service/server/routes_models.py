@@ -256,6 +256,12 @@ class AgentTaskCreate(BaseModel):
 
 class FollowRequest(BaseModel):
     leader_id: int
+    # Proportional sizing: follower replays the leader's trade with
+    # quantity = leader_qty * copy_ratio. 1.0 = same size. Range 0.01–10.0.
+    copy_ratio: Optional[float] = 1.0
+    # If false, the subscription only feeds notifications + leaderboard
+    # tracking but never opens/closes positions for the follower.
+    auto_copy: Optional[bool] = True
 
 
 class UserSendCodeRequest(BaseModel):

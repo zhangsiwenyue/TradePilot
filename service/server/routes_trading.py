@@ -1,3 +1,4 @@
+import math
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -790,6 +791,13 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
         if follower_id == leader_id:
             raise HTTPException(status_code=400, detail='Cannot follow yourself')
 
+        # Validate copy settings. Ratio clamped to a sane band so a typo can't
+        # bankrupt the follower or create dust positions; auto_copy is a flag.
+        copy_ratio = float(data.copy_ratio if data.copy_ratio is not None else 1.0)
+        if not math.isfinite(copy_ratio) or copy_ratio < 0.01 or copy_ratio > 10.0:
+            raise HTTPException(status_code=400, detail='copy_ratio must be between 0.01 and 10.0')
+        auto_copy_flag = 1 if (data.auto_copy if data.auto_copy is not None else True) else 0
+
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute(
@@ -799,16 +807,32 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
             """,
             (leader_id, follower_id),
         )
-        if cursor.fetchone():
+        existing = cursor.fetchone()
+        if existing:
+            # Re-following = updating the copy settings.
+            cursor.execute(
+                """
+                UPDATE subscriptions
+                SET copy_ratio = ?, auto_copy = ?
+                WHERE id = ?
+                """,
+                (copy_ratio, auto_copy_flag, existing['id']),
+            )
+            conn.commit()
             conn.close()
-            return {'message': 'Already following'}
+            return {
+                'success': True,
+                'message': 'Already following (settings updated)',
+                'copy_ratio': copy_ratio,
+                'auto_copy': bool(auto_copy_flag),
+            }
 
         cursor.execute(
             """
-            INSERT INTO subscriptions (leader_id, follower_id, status)
-            VALUES (?, ?, 'active')
+            INSERT INTO subscriptions (leader_id, follower_id, status, copy_ratio, auto_copy)
+            VALUES (?, ?, 'active', ?, ?)
             """,
-            (leader_id, follower_id),
+            (leader_id, follower_id, copy_ratio, auto_copy_flag),
         )
         subscription_id = cursor.lastrowid
         record_event(
@@ -817,7 +841,12 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
             target_agent_id=leader_id,
             object_type='subscription',
             object_id=subscription_id,
-            metadata={'leader_id': leader_id, 'follower_id': follower_id},
+            metadata={
+                'leader_id': leader_id,
+                'follower_id': follower_id,
+                'copy_ratio': copy_ratio,
+                'auto_copy': bool(auto_copy_flag),
+            },
             cursor=cursor,
         )
         conn.commit()
@@ -832,9 +861,16 @@ def register_trading_routes(app: FastAPI, ctx: RouteContext) -> None:
                 'leader_id': leader_id,
                 'follower_id': follower_id,
                 'follower_name': agent['name'],
+                'copy_ratio': copy_ratio,
+                'auto_copy': bool(auto_copy_flag),
             },
         )
-        return {'success': True, 'message': 'Following'}
+        return {
+            'success': True,
+            'message': 'Following',
+            'copy_ratio': copy_ratio,
+            'auto_copy': bool(auto_copy_flag),
+        }
 
     @app.post('/api/signals/unfollow')
     async def unfollow_provider(data: FollowRequest, authorization: str = Header(None)):

@@ -390,13 +390,15 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
 
         follower_count = 0
         copied_follower_ids: set[int] = set()
+        copied_notifications: list[dict[str, Any]] = []
         try:
             conn = get_db_connection()
             cursor = conn.cursor()
             begin_write_transaction(cursor)
             cursor.execute(
                 """
-                SELECT follower_id FROM subscriptions
+                SELECT follower_id, copy_ratio, auto_copy
+                FROM subscriptions
                 WHERE leader_id = ? AND status = 'active'
                 """,
                 (agent_id,),
@@ -405,13 +407,29 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
 
             for follower in followers:
                 follower_id = follower['follower_id']
+                # Respect opt-out: subscription exists for leaderboard / news
+                # tracking only, never opens or closes positions.
+                if follower['auto_copy'] is not None and not int(follower['auto_copy']):
+                    continue
+                # Apply proportional sizing. Default 1.0 keeps the original
+                # behaviour for existing subscriptions.
+                try:
+                    ratio = float(follower['copy_ratio']) if follower['copy_ratio'] is not None else 1.0
+                except Exception:
+                    ratio = 1.0
+                if not math.isfinite(ratio) or ratio <= 0:
+                    continue
+                follower_qty = qty * ratio
+                if follower_qty <= 0:
+                    continue
+                follower_trade_value = price * follower_qty
                 try:
                     cursor.execute(f'SAVEPOINT follower_{follower_id}')
                     follower_position = None
 
                     if action_lower in ['buy', 'short']:
-                        follower_fee = trade_value * TRADE_FEE_RATE
-                        follower_total = trade_value + follower_fee
+                        follower_fee = follower_trade_value * TRADE_FEE_RATE
+                        follower_total = follower_trade_value + follower_fee
                         cursor.execute('SELECT cash FROM agents WHERE id = ?', (follower_id,))
                         row = cursor.fetchone()
                         follower_cash = row['cash'] if row else 0
@@ -426,16 +444,32 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                             symbol,
                             polymarket_token_id,
                         )
-                        if action_lower == 'cover' and (not follower_position or follower_position['entry_price'] is None):
+                        if not follower_position:
                             cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
                             continue
+                        existing_qty = float(follower_position['quantity'])
+                        if action_lower == 'sell':
+                            if existing_qty <= 0:
+                                cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
+                                continue
+                            # Don't try to sell more than the follower actually has.
+                            follower_qty = min(follower_qty, existing_qty)
+                        else:  # cover
+                            if existing_qty >= 0 or follower_position['entry_price'] is None:
+                                cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
+                                continue
+                            follower_qty = min(follower_qty, abs(existing_qty))
+                        if follower_qty <= 0:
+                            cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
+                            continue
+                        follower_trade_value = price * follower_qty
 
                     _update_position_from_signal(
                         follower_id,
                         symbol,
                         market,
                         side,
-                        qty,
+                        follower_qty,
                         price,
                         executed_at,
                         leader_id=agent_id,
@@ -446,7 +480,11 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
 
                     follower_signal_id = _reserve_signal_id(cursor)
                     leader_name = agent['name'] if isinstance(agent, dict) else 'Leader'
-                    copy_content = f'[Copied from {leader_name}] {data.content or ""}'
+                    copy_content = (
+                        f'[Copied from {leader_name} @ {ratio:g}x] {data.content or ""}'
+                        if ratio != 1.0
+                        else f'[Copied from {leader_name}] {data.content or ""}'
+                    )
                     cursor.execute(
                         """
                         INSERT INTO signals
@@ -462,7 +500,7 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                             polymarket_outcome,
                             side,
                             price,
-                            qty,
+                            follower_qty,
                             copy_content,
                             int(datetime.now(timezone.utc).timestamp()),
                             now,
@@ -471,17 +509,17 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                     )
 
                     if action_lower in ['buy', 'short']:
-                        follower_fee = trade_value * TRADE_FEE_RATE
-                        follower_total = trade_value + follower_fee
+                        follower_fee = follower_trade_value * TRADE_FEE_RATE
+                        follower_total = follower_trade_value + follower_fee
                         cursor.execute('UPDATE agents SET cash = cash - ? WHERE id = ?', (follower_total, follower_id))
                     elif action_lower == 'sell':
-                        follower_fee = trade_value * TRADE_FEE_RATE
-                        follower_net = trade_value - follower_fee
+                        follower_fee = follower_trade_value * TRADE_FEE_RATE
+                        follower_net = follower_trade_value - follower_fee
                         cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (follower_net, follower_id))
                     else:
-                        follower_fee = trade_value * TRADE_FEE_RATE
+                        follower_fee = follower_trade_value * TRADE_FEE_RATE
                         follower_entry_price = float(follower_position['entry_price'])
-                        follower_net = ((2 * follower_entry_price) - price) * qty - follower_fee
+                        follower_net = ((2 * follower_entry_price) - price) * follower_qty - follower_fee
                         cursor.execute('UPDATE agents SET cash = cash + ? WHERE id = ?', (follower_net, follower_id))
 
                     score_signal_quality(
@@ -508,13 +546,42 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                         market=market,
                         experiment_key=follower_experiment_key,
                         variant_key=follower_variant_key,
-                        metadata={'symbol': symbol, 'side': side, 'copied_from_agent_id': agent_id},
+                        metadata={
+                            'symbol': symbol,
+                            'side': side,
+                            'copied_from_agent_id': agent_id,
+                            'copy_ratio': ratio,
+                        },
                         cursor=cursor,
                     )
 
                     cursor.execute(f'RELEASE SAVEPOINT follower_{follower_id}')
                     follower_count += 1
                     copied_follower_ids.add(follower_id)
+                    # Queue a toast/WebSocket notification for the follower.
+                    # Sent AFTER the SQL transaction commits so a failure here
+                    # never partially undoes the copy.
+                    leader_name = agent['name'] if isinstance(agent, dict) else f'Agent {agent_id}'
+                    ratio_suffix = f' @ {ratio:g}x' if ratio != 1.0 else ''
+                    side_label = side.upper() if isinstance(side, str) else 'TRADE'
+                    copied_notifications.append({
+                        'follower_id': follower_id,
+                        'content': (
+                            f'{leader_name} {side_label} {follower_qty:g} {symbol} '
+                            f'@ ${price:.2f}{ratio_suffix} — copied to your paper account'
+                        ),
+                        'data': {
+                            'leader_id': agent_id,
+                            'leader_name': leader_name,
+                            'market': market,
+                            'symbol': symbol,
+                            'side': side,
+                            'price': price,
+                            'quantity': follower_qty,
+                            'copy_ratio': ratio,
+                            'source_signal_id': signal_id,
+                        },
+                    })
                 except Exception:
                     try:
                         cursor.execute(f'ROLLBACK TO SAVEPOINT follower_{follower_id}')
@@ -534,6 +601,19 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
         invalidate_position_cache(ctx, agent_id)
         for follower_id in copied_follower_ids:
             invalidate_position_cache(ctx, follower_id)
+
+        # Push notifications now that the DB transaction has committed.
+        for notif in copied_notifications:
+            try:
+                await push_agent_message(
+                    ctx,
+                    notif['follower_id'],
+                    'trade_copied',
+                    notif['content'],
+                    notif['data'],
+                )
+            except Exception:
+                pass
 
         payload = {
             'success': True,
@@ -1322,6 +1402,8 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 a.name as leader_name,
                 a.identity_status as leader_identity_status,
                 s.created_at as subscribed_at,
+                s.copy_ratio as copy_ratio,
+                s.auto_copy as auto_copy,
                 (SELECT COUNT(*) FROM subscriptions sub WHERE sub.leader_id = s.leader_id AND sub.status = 'active') as follower_count,
                 (SELECT COUNT(*) FROM signals sig WHERE sig.agent_id = s.leader_id AND sig.message_type = 'operation' AND sig.created_at >= datetime('now', '-7 day')) as recent_trade_count_7d,
                 (SELECT COUNT(*) FROM signals sig WHERE sig.agent_id = s.leader_id AND sig.message_type = 'strategy' AND sig.created_at >= datetime('now', '-7 day')) as recent_strategy_count_7d,
@@ -1354,6 +1436,8 @@ def register_signal_routes(app: FastAPI, ctx: RouteContext) -> None:
                 'leader_identity_status': leader_identity,
                 'leader_is_verified': leader_identity == 'verified',
                 'subscribed_at': row['subscribed_at'],
+                'copy_ratio': float(row['copy_ratio']) if row['copy_ratio'] is not None else 1.0,
+                'auto_copy': bool(row['auto_copy']) if row['auto_copy'] is not None else True,
                 'follower_count': row['follower_count'] or 0,
                 'recent_trade_count_7d': row['recent_trade_count_7d'] or 0,
                 'recent_strategy_count_7d': row['recent_strategy_count_7d'] or 0,

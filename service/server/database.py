@@ -359,6 +359,28 @@ def get_database_status() -> dict[str, Any]:
         conn.close()
 
 
+def _ensure_subscription_copy_columns(cursor: Any) -> None:
+    """Add copy_ratio (proportional sizing) and auto_copy (opt-out flag) to
+    the subscriptions table. Existing rows default to ratio=1.0, auto_copy=true
+    so behaviour matches the original always-on, 1x-size copy trading."""
+    if using_postgres():
+        cursor.execute(
+            "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS copy_ratio DOUBLE PRECISION NOT NULL DEFAULT 1.0"
+        )
+        cursor.execute(
+            "ALTER TABLE subscriptions ADD COLUMN IF NOT EXISTS auto_copy BOOLEAN NOT NULL DEFAULT TRUE"
+        )
+        return
+
+    cursor.execute("PRAGMA table_info(subscriptions)")
+    columns = {col["name"] for col in cursor.fetchall()}
+    if "copy_ratio" not in columns:
+        cursor.execute("ALTER TABLE subscriptions ADD COLUMN copy_ratio REAL NOT NULL DEFAULT 1.0")
+    if "auto_copy" not in columns:
+        # SQLite has no real BOOLEAN; INTEGER 0/1 is the convention.
+        cursor.execute("ALTER TABLE subscriptions ADD COLUMN auto_copy INTEGER NOT NULL DEFAULT 1")
+
+
 def _ensure_challenge_trades_source_signal_nullable(cursor: Any) -> None:
     """Allow dedicated challenge trades that do not originate from a signal."""
     if using_postgres():
@@ -629,6 +651,8 @@ def init_database():
             leader_id INTEGER NOT NULL,
             follower_id INTEGER NOT NULL,
             status TEXT DEFAULT 'active',
+            copy_ratio REAL NOT NULL DEFAULT 1.0,
+            auto_copy INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (leader_id) REFERENCES agents(id),
             FOREIGN KEY (follower_id) REFERENCES agents(id)
@@ -860,6 +884,7 @@ def init_database():
     """)
 
     _ensure_challenge_trades_source_signal_nullable(cursor)
+    _ensure_subscription_copy_columns(cursor)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS signal_predictions (

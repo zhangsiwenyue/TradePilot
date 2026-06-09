@@ -1391,8 +1391,27 @@ export function CopyTradingPage({ token }: { token: string }) {
   const [followingTotal, setFollowingTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [activeTab, setActiveTab] = useState<'discover' | 'following'>('discover')
+  // Per-leader pending copy settings before the user hits Follow. Once
+  // followed, the saved values come from the `following` list response.
+  const [copySettings, setCopySettings] = useState<Record<number, { copyRatio: number, autoCopy: boolean }>>({})
   const navigate = useNavigate()
   const { language } = useLanguage()
+
+  const getCopySettings = (leaderId: number, fallback?: { copyRatio?: number, autoCopy?: boolean }) => {
+    const fromState = copySettings[leaderId]
+    if (fromState) return fromState
+    return {
+      copyRatio: fallback?.copyRatio ?? 1.0,
+      autoCopy: fallback?.autoCopy ?? true,
+    }
+  }
+
+  const updateCopySettings = (leaderId: number, patch: Partial<{ copyRatio: number, autoCopy: boolean }>) => {
+    setCopySettings((prev) => {
+      const current = prev[leaderId] || { copyRatio: 1.0, autoCopy: true }
+      return { ...prev, [leaderId]: { ...current, ...patch } }
+    })
+  }
 
   useEffect(() => {
     loadData(providerPage, followingPage)
@@ -1441,11 +1460,13 @@ export function CopyTradingPage({ token }: { token: string }) {
     setLoading(false)
   }
 
-  const handleFollow = async (leaderId: number) => {
+  const handleFollow = async (leaderId: number, opts?: { copyRatio?: number, autoCopy?: boolean }) => {
     if (!token) {
       alert(language === 'zh' ? '请先登录' : 'Please login first')
       return
     }
+    const copyRatio = opts?.copyRatio ?? 1.0
+    const autoCopy = opts?.autoCopy ?? true
     try {
       const res = await fetch(`${API_BASE}/signals/follow`, {
         method: 'POST',
@@ -1453,7 +1474,7 @@ export function CopyTradingPage({ token }: { token: string }) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ leader_id: leaderId })
+        body: JSON.stringify({ leader_id: leaderId, copy_ratio: copyRatio, auto_copy: autoCopy })
       })
       const data = await res.json()
       if (res.ok && (data.success || data.message === 'Already following')) {
@@ -1593,9 +1614,42 @@ export function CopyTradingPage({ token }: { token: string }) {
                         {language === 'zh' ? '取消跟单' : 'Unfollow'}
                       </button>
                     ) : (
-                      <button className="btn btn-primary" onClick={() => handleFollow(provider.agent_id)}>
-                        {language === 'zh' ? '立即跟单' : 'Follow Trader'}
-                      </button>
+                      (() => {
+                        const settings = getCopySettings(provider.agent_id)
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px', minWidth: '210px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              <span style={{ whiteSpace: 'nowrap' }}>
+                                {language === 'zh' ? `跟单比例: ${settings.copyRatio}x` : `Copy size: ${settings.copyRatio}x`}
+                              </span>
+                              <input
+                                type="range"
+                                min={0.05}
+                                max={2}
+                                step={0.05}
+                                value={settings.copyRatio}
+                                onChange={(e) => updateCopySettings(provider.agent_id, { copyRatio: parseFloat(e.target.value) })}
+                                style={{ width: '100px' }}
+                                title={language === 'zh' ? '0.05x – 2x' : '0.05x – 2x'}
+                              />
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                              <input
+                                type="checkbox"
+                                checked={settings.autoCopy}
+                                onChange={(e) => updateCopySettings(provider.agent_id, { autoCopy: e.target.checked })}
+                              />
+                              {language === 'zh' ? '自动复制其每笔交易' : 'Auto-copy every trade'}
+                            </label>
+                            <button
+                              className="btn btn-primary"
+                              onClick={() => handleFollow(provider.agent_id, { copyRatio: settings.copyRatio, autoCopy: settings.autoCopy })}
+                            >
+                              {language === 'zh' ? '立即跟单' : 'Follow Trader'}
+                            </button>
+                          </div>
+                        )
+                      })()
                     )}
                   </div>
 
@@ -1725,6 +1779,47 @@ export function CopyTradingPage({ token }: { token: string }) {
                           {formatReturnPercent(provider.total_profit_percent)}
                         </span>
                       )}
+                      {(() => {
+                        const settings = getCopySettings(f.leader_id, { copyRatio: f.copy_ratio, autoCopy: f.auto_copy })
+                        const savedRatio = typeof f.copy_ratio === 'number' ? f.copy_ratio : 1.0
+                        const savedAuto = f.auto_copy !== false
+                        const dirty = settings.copyRatio !== savedRatio || settings.autoCopy !== savedAuto
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px', minWidth: '210px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              <span style={{ whiteSpace: 'nowrap' }}>
+                                {language === 'zh' ? `跟单比例: ${settings.copyRatio}x` : `Copy size: ${settings.copyRatio}x`}
+                              </span>
+                              <input
+                                type="range"
+                                min={0.05}
+                                max={2}
+                                step={0.05}
+                                value={settings.copyRatio}
+                                onChange={(e) => updateCopySettings(f.leader_id, { copyRatio: parseFloat(e.target.value) })}
+                                style={{ width: '100px' }}
+                              />
+                            </div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                              <input
+                                type="checkbox"
+                                checked={settings.autoCopy}
+                                onChange={(e) => updateCopySettings(f.leader_id, { autoCopy: e.target.checked })}
+                              />
+                              {language === 'zh' ? '自动复制其每笔交易' : 'Auto-copy every trade'}
+                            </label>
+                            {dirty && (
+                              <button
+                                className="btn btn-primary"
+                                style={{ padding: '4px 10px', fontSize: '12px' }}
+                                onClick={() => handleFollow(f.leader_id, { copyRatio: settings.copyRatio, autoCopy: settings.autoCopy })}
+                              >
+                                {language === 'zh' ? '保存设置' : 'Save settings'}
+                              </button>
+                            )}
+                          </div>
+                        )
+                      })()}
                       <button
                         onClick={() => handleUnfollow(f.leader_id)}
                         style={{
